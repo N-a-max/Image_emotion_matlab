@@ -1,0 +1,167 @@
+%  Emotion Detector 
+% Initialize webcam
+cam = webcam;
+% Ask for countdown 
+delayTime = input('Enter the delay time before capture (in seconds): ');
+
+% Validate input
+if isempty(delayTime) || ~isnumeric(delayTime) || delayTime <= 0
+    disp('Invalid input. Using default delay of 5 seconds...');
+    delayTime = 5;
+end
+
+disp('📸 Get ready! Webcam preview is live...');
+preview(cam);
+
+% Countdown
+for sec = delayTime:-1:1
+    fprintf('Capturing in %d...\n', sec);
+    pause(1);
+end
+
+% Capture image
+img = snapshot(cam);
+closePreview(cam);
+disp('✅ Image captured successfully!');
+
+% Convert to grayscale
+grayImg = rgb2gray(img);
+
+% Detect face using Haar cascade
+faceDetector = vision.CascadeObjectDetector('FrontalFaceCART', 'MinSize', [100 100]);
+bboxes = step(faceDetector, grayImg);
+
+% Load pretrained emotion detection model
+try
+    modelPath = 'C:\Users\dfire\OneDrive\Desktop\New folder\src\models\net_emotion.mat';
+    data = load(modelPath);
+    
+    % Safely access model
+    fields = fieldnames(data);
+    emotionNet = data.(fields{1});
+    disp(['✅ Loaded model variable: ', fields{1}]);
+
+catch ME
+    disp('⚠️ Error loading model:');
+    disp(ME.message);
+    error('Check the model file path and structure!');
+end
+
+% Flags
+isHappy = false;
+isAngry = false;
+isDisgust = false;
+
+% If no face
+if isempty(bboxes)
+    imshow(img);
+    title('🚫 No Face Detected');
+else
+    annotatedImg = img;
+    
+    for i = 1:size(bboxes,1)
+        face = imcrop(grayImg, bboxes(i,:));
+        face = imresize(face, [64 64]);
+        face = double(face) / 255;
+
+        if isa(emotionNet, 'SeriesNetwork') || isa(emotionNet, 'DAGNetwork')
+            face = reshape(face, [64 64 1]);
+        else
+            face = face(:)';
+        end
+
+        try
+            if isa(emotionNet, 'SeriesNetwork') || isa(emotionNet, 'DAGNetwork')
+                predictedEmotion = classify(emotionNet, face);
+            elseif isprop(emotionNet, 'predict')
+                predictedEmotion = predict(emotionNet, face);
+            else
+                predictedEmotion = 'unknown';
+            end
+        catch
+            predictedEmotion = 'unknown';
+        end
+
+        if ~ischar(predictedEmotion) && ~isstring(predictedEmotion)
+            predictedEmotion = char(predictedEmotion);
+        end
+
+        disp(['Detected Emotion: ', char(predictedEmotion)]);
+
+        % Flags
+        if strcmpi(predictedEmotion, 'happy')
+            isHappy = true;
+        elseif strcmpi(predictedEmotion, 'angry')
+            isAngry = true;
+        elseif strcmpi(predictedEmotion, 'disgust')
+            isDisgust = true;
+        end
+
+        % Annotate image
+        position = [bboxes(i,1), bboxes(i,2)-30];
+        annotatedImg = insertText(annotatedImg, position, char(predictedEmotion), ...
+            'FontSize', 16, 'BoxColor', 'cyan', 'TextColor', 'black');
+        annotatedImg = insertShape(annotatedImg, 'Rectangle', bboxes(i,:), ...
+            'LineWidth', 3, 'Color', 'green');
+    end
+
+    %% 🎨 Apply Emotion-Based Effects
+
+    if isHappy
+        disp('😊 Emotion: Happy! Cartoonifying...');
+        smoothImg = imbilatfilt(img, 30, 10);
+        gray = rgb2gray(smoothImg);
+        edges = edge(gray, 'Canny');
+        edgesInv = uint8(~edges) * 255;
+        edgesRGB = repmat(edgesInv, [1 1 3]);
+        cartoonImg = uint8(double(smoothImg) .* double(edgesRGB) / 255);
+        cartoonImg = imresize(cartoonImg, 1.5);
+        figure('Name', '😊 Cartoonified Happy Face', 'NumberTitle', 'off');
+        imshow(cartoonImg);
+
+    elseif isAngry
+        disp('😡 Emotion: Angry! Adding RED EFFECT...');
+        redFilter = img;
+        redFilter(:,:,2) = redFilter(:,:,2) * 0.5;
+        redFilter(:,:,3) = redFilter(:,:,3) * 0.5;
+        figure('Name', '😠 Angry Face - Red Tint', 'NumberTitle', 'off');
+        imshow(redFilter);
+
+    elseif isDisgust
+        disp('🤢 Emotion: Disgust! Applying Ripple Effect...');
+        grayDis = rgb2gray(img);
+        [rows, cols] = size(grayDis);
+        [X, Y] = meshgrid(1:cols, 1:rows);
+        ripple = sin(2*pi*X/40 + Y/40);  % Lower frequency ripple
+        ripple = ripple * 5;             % Lower intensity
+        rippleX = X + ripple;
+        rippleY = Y + ripple;
+        rippleX = min(max(rippleX,1), cols);
+        rippleY = min(max(rippleY,1), rows);
+        rippleImg = uint8(zeros(size(img)));
+        for c = 1:3
+            ch = double(img(:,:,c));
+            rippleImg(:,:,c) = uint8(interp2(ch, rippleX, rippleY, 'linear', 0));
+        end
+        figure('Name', '🤢 Disgust - Ripple Effect', 'NumberTitle', 'off');
+        imshow(rippleImg);
+
+    elseif strcmpi(predictedEmotion, 'neutral')
+        disp('😐 Emotion: Neutral. Show some emotions, I know you have good drama skills!');
+        figure('Name', 'Neutral Emotion', 'NumberTitle', 'off');
+        imshow(img);
+        title('😐 Neutral Emotion');
+
+    else
+        % Display specific image for other emotions
+        disp('🤔 Unknown Emotion. Displaying a specific image...');
+        otherEmotionImgPath = 'C:\Users\dfire\OneDrive\Desktop\New folder\5790668a-8231-4f44-936b-d1b19638cc48.png';
+        otherEmotionImg = imread(otherEmotionImgPath);
+        figure('Name', 'Unknown Emotion Image', 'NumberTitle', 'off');
+        imshow(otherEmotionImg);
+        title(['🤔 Unknown Emotion: ', char(predictedEmotion)]);
+    end
+end
+
+% Cleanup
+clear cam;
